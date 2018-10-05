@@ -15,6 +15,12 @@
 			"revisionTime": "2018-01-08T23:09:05Z"
 		},
 		{
+			"checksumSHA1": "A8S2BvJZghdrzqJXbvrMsTDVgL0=",
+			"path": "github.com/davecgh/go-spew",
+			"revision": "d8f796af33cc11cb798c1aaeb27a4ebc5099927d",
+			"revisionTime": "2018-08-30T19:11:22Z"
+		},
+		{
 			"checksumSHA1": "CSPbwbyzqA6sfORicn4HFtIhF/c=",
 			"path": "github.com/davecgh/go-spew/spew",
 			"revision": "d8f796af33cc11cb798c1aaeb27a4ebc5099927d",
@@ -43,6 +49,12 @@
 			"path": "github.com/google/uuid",
 			"revision": "9b3b1e0f5f99ae461456d768e7d301a7acdaa2d8",
 			"revisionTime": "2018-09-17T14:00:05Z"
+		},
+		{
+			"checksumSHA1": "Ld1fkCBbtUqRg3qu1gZKpP2OyO4=",
+			"path": "github.com/gorilla/mux",
+			"revision": "9e1f5955c0d22b55d9e20d6faa28589f83b2faca",
+			"revisionTime": "2018-09-03T15:43:05Z"
 		},
 		{
 			"checksumSHA1": "VKx/YhlIAbIJ9dXAxCCHOkjom4U=",
@@ -163,6 +175,12 @@
 			"path": "github.com/jbenet/goprocess/ratelimit",
 			"revision": "b497e2f366b8624394fb2e89c10ab607bebdde0b",
 			"revisionTime": "2016-08-26T01:27:19Z"
+		},
+		{
+			"checksumSHA1": "I+g5iffd0bNDiI8swxzsHiJxBz0=",
+			"path": "github.com/joho/godotenv",
+			"revision": "c0b86d615e06d6fa5f869364d68f774ba49a86e3",
+			"revisionTime": "2018-09-27T05:32:03Z"
 		},
 		{
 			"checksumSHA1": "Zo6U4sMCL4ubH/wNm0s1p9nY2I0=",
