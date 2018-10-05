@@ -25,6 +25,8 @@ import (
 	ma "github.com/multiformats/go-multiaddr"
 )
 
+const difficulty = 1
+
 var WalletSuffix string
 
 // Block represents each 'item' in the blockchain
@@ -34,6 +36,8 @@ type Block struct {
 	Result       int `json:"result"`
 	Hash      string `json:"hash"`
 	PrevHash  string `json:"prevhash"`
+	Difficulty int
+	Nonce      string
 	Proof        uint64           `json:"proof"`
 	Transactions []Transaction `json:"transactions"`
 	Accounts   map[string]uint64  `json:"accounts"`
@@ -331,12 +335,13 @@ func IsBlockValid(newBlock, oldBlock Block) bool {
 
 // SHA256 hashing
 func CalculateHash(block Block) string {
-	record := strconv.Itoa(block.Index) + block.Timestamp + strconv.Itoa(block.Result) + block.PrevHash
+	record := strconv.Itoa(block.Index) + block.Timestamp + strconv.Itoa(block.Result) + block.PrevHash  + block.Nonce
 	h := sha256.New()
 	h.Write([]byte(record))
 	hashed := h.Sum(nil)
 	return hex.EncodeToString(hashed)
 }
+
 
 // create a new block using previous block's hash
 func GenerateBlock(oldBlock Block, Result int) Block {
@@ -349,7 +354,30 @@ func GenerateBlock(oldBlock Block, Result int) Block {
 	newBlock.Timestamp = t.String()
 	newBlock.Result = Result
 	newBlock.PrevHash = oldBlock.Hash
-	newBlock.Hash = CalculateHash(newBlock)
+	// newBlock.Hash = CalculateHash(newBlock)
+
+	newBlock.Difficulty = difficulty
+
+	for i := 0; ; i++ {
+		hex := fmt.Sprintf("%x", i)
+		newBlock.Nonce = hex
+		if !isHashValid(CalculateHash(newBlock), newBlock.Difficulty) {
+			fmt.Println(CalculateHash(newBlock), " do more work!")
+			time.Sleep(time.Second)
+			continue
+		} else {
+			fmt.Println(CalculateHash(newBlock), " work done!")
+			newBlock.Hash = CalculateHash(newBlock)
+			break
+		}
+
+	}
 
 	return newBlock
+}
+
+
+func isHashValid(hash string, difficulty int) bool {
+	prefix := strings.Repeat("0", difficulty)
+	return strings.HasPrefix(hash, prefix)
 }

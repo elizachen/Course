@@ -19,6 +19,8 @@ import (
 	"Course/wallet"
 )
 
+const difficulty = 1
+
 func main() {
 
 	// Parse options from the command line
@@ -54,7 +56,7 @@ func runblockchain(listenF *int, target *string, seed *int64, secio *bool, suffi
 		}
 		defaultAccounts[*initAccounts] = 10000
 	}
-	genesisBlock = blockchain.Block{0, t.String(), 0, blockchain.CalculateHash(genesisBlock), "", 100,nil, defaultAccounts}
+	genesisBlock = blockchain.Block{0, t.String(), 0, blockchain.CalculateHash(genesisBlock), "", difficulty, "", 100,nil, defaultAccounts}
 
 	var blocks []blockchain.Block
 	blocks = append(blocks, genesisBlock)
