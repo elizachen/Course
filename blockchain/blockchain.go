@@ -36,11 +36,17 @@ type Block struct {
 	Result       int `json:"result"`
 	Hash      string `json:"hash"`
 	PrevHash  string `json:"prevhash"`
-	Difficulty int
-	Nonce      string
 	Proof        uint64           `json:"proof"`
 	Transactions []Transaction `json:"transactions"`
-	Accounts   map[string]uint64  `json:"accounts"`
+	Accounts   map[string]Account  `json:"accounts"`
+	Difficulty int
+	Nonce      string
+}
+
+
+type Account struct {
+	Balance uint64 `json:"balance"`
+	State   uint64 `json:"state"`
 }
 
 
@@ -98,7 +104,7 @@ func (t *Blockchain) LastBlock() Block {
 func (t *Blockchain) GetBalance(address string) uint64 {
 	accounts := t.LastBlock().Accounts
 	if value, ok := accounts[address]; ok {
-		return value
+		return value.Balance
 	}
 	return 0
 }
@@ -115,17 +121,24 @@ func (t *Blockchain)PackageTx(newBlock *Block) {
 
 	for _, v := range t.TxPool.AllTx{
 		if value, ok := AccountsMap[v.Sender]; ok {
-			if value < v.Amount{
+			if value.Balance < v.Amount{
 				unusedTx = append(unusedTx, v)
 				continue
 			}
-			AccountsMap[v.Sender] = value-v.Amount
+			value.Balance -= v.Amount
+			value.State += 1
+			AccountsMap[v.Sender] = value
 		}
 
 		if value, ok := AccountsMap[v.Recipient]; ok {
-			AccountsMap[v.Recipient] = value + v.Amount
+			value.Balance += v.Amount
+			AccountsMap[v.Recipient] = value
 		}else {
-			AccountsMap[v.Recipient] = v.Amount
+
+			newAccount := new(Account)
+			newAccount.Balance = v.Amount
+			newAccount.State = 0
+			AccountsMap[v.Recipient] = *newAccount
 		}
 	}
 
@@ -157,7 +170,7 @@ func UnLock(){
 
 // makeBasicHost creates a LibP2P host with a random peer ID listening on the
 // given multiaddress. It will use secio if secio is true.
-func MakeBasicHost(listenPort int, secio bool, randseed int64) (host.Host, error) {
+func MakeBasicHost(listenPort int, secio bool, randseed int64, initAccount string) (host.Host, error) {
 
 	// If the seed is zero, use real cryptographic randomness. Otherwise, use a
 	// deterministic randomness source to make generated keys stay the same
@@ -195,9 +208,17 @@ func MakeBasicHost(listenPort int, secio bool, randseed int64) (host.Host, error
 	fullAddr := addr.Encapsulate(hostAddr)
 	log.Printf("I am %s\n", fullAddr)
 	if secio {
-		log.Printf("Now run \"go run main.go -c chain -l %d -d %s -secio\" on a different terminal\n", listenPort+2, fullAddr)
+		if initAccount != "" {
+			log.Printf("Now run \"go run main.go -c chain -l %d -a %s -d %s -secio\" on a different terminal\n", listenPort+2, initAccount, fullAddr)
+		}else {
+			log.Printf("Now run \"go run main.go -c chain -l %d -d %s -secio\" on a different terminal\n", listenPort+2, fullAddr)
+		}
 	} else {
-		log.Printf("Now run \"go run main.go -c chain -l %d -d %s\" on a different terminal\n", listenPort+2, fullAddr)
+		if initAccount != "" {
+			log.Printf("Now run \"go run main.go -c chain -l %d -a %s -d %s\" on a different terminal\n", listenPort+2, initAccount, fullAddr)
+		}else {
+			log.Printf("Now run \"go run main.go -c chain -l %d -d %s\" on a different terminal\n", listenPort+2, fullAddr)
+		}
 	}
 
 	return basicHost, nil
@@ -291,6 +312,7 @@ func WriteData(rw *bufio.ReadWriter) {
 			BlockchainInstance.PackageTx(&newBlock)
 		}else {
 			newBlock.Accounts = BlockchainInstance.LastBlock().Accounts
+			newBlock.Transactions = make([]Transaction, 0)
 		}
 
 		if IsBlockValid(newBlock, BlockchainInstance.Blocks[len(BlockchainInstance.Blocks)-1]) {
@@ -335,7 +357,7 @@ func IsBlockValid(newBlock, oldBlock Block) bool {
 
 // SHA256 hashing
 func CalculateHash(block Block) string {
-	record := strconv.Itoa(block.Index) + block.Timestamp + strconv.Itoa(block.Result) + block.PrevHash  + block.Nonce
+	record := strconv.Itoa(block.Index) + block.Timestamp + strconv.Itoa(block.Result) + block.PrevHash
 	h := sha256.New()
 	h.Write([]byte(record))
 	hashed := h.Sum(nil)
@@ -343,9 +365,9 @@ func CalculateHash(block Block) string {
 }
 
 
+
 // create a new block using previous block's hash
 func GenerateBlock(oldBlock Block, Result int) Block {
-
 	var newBlock Block
 
 	t := time.Now()
@@ -354,30 +376,35 @@ func GenerateBlock(oldBlock Block, Result int) Block {
 	newBlock.Timestamp = t.String()
 	newBlock.Result = Result
 	newBlock.PrevHash = oldBlock.Hash
-	// newBlock.Hash = CalculateHash(newBlock)
-
 	newBlock.Difficulty = difficulty
 
 	for i := 0; ; i++ {
 		hex := fmt.Sprintf("%x", i)
 		newBlock.Nonce = hex
-		if !isHashValid(CalculateHash(newBlock), newBlock.Difficulty) {
-			fmt.Println(CalculateHash(newBlock), " do more work!")
+		if !isHashValid(calculateHash(newBlock), newBlock.Difficulty) {
+			fmt.Println(calculateHash(newBlock), " do more work!")
 			time.Sleep(time.Second)
 			continue
 		} else {
-			fmt.Println(CalculateHash(newBlock), " work done!")
-			newBlock.Hash = CalculateHash(newBlock)
+			fmt.Println(calculateHash(newBlock), " work done!")
+			newBlock.Hash = calculateHash(newBlock)
 			break
 		}
 
 	}
-
 	return newBlock
 }
-
 
 func isHashValid(hash string, difficulty int) bool {
 	prefix := strings.Repeat("0", difficulty)
 	return strings.HasPrefix(hash, prefix)
+}
+
+// SHA256 hasing
+func calculateHash(block Block) string {
+	record := strconv.Itoa(block.Index) + block.Timestamp + strconv.Itoa(block.Result) + block.PrevHash + block.Nonce
+	h := sha256.New()
+	h.Write([]byte(record))
+	hashed := h.Sum(nil)
+	return hex.EncodeToString(hashed)
 }

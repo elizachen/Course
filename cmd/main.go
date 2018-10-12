@@ -1,278 +1,147 @@
 package main
 
 import (
-	"bufio"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
-	"fmt"
-	"io"
-	"log"
-	"math/rand"
-	"net"
-	"os"
-	"strconv"
-	"sync"
 	"time"
+	"bufio"
+	"flag"
+	"fmt"
+	"context"
+	"log"
 
-	"github.com/davecgh/go-spew/spew"
-	"github.com/joho/godotenv"
+	"Course/blockchain"
+	"Course/rpc"
+
+	golog "github.com/ipfs/go-log"
+	peer "github.com/libp2p/go-libp2p-peer"
+	pstore "github.com/libp2p/go-libp2p-peerstore"
+	gologging "github.com/whyrusleeping/go-logging"
+	ma "github.com/multiformats/go-multiaddr"
+	"Course/wallet"
 )
-
-// Block represents each 'item' in the blockchain
-type Block struct {
-	Index     int
-	Timestamp string
-	Result       int
-	Hash      string
-	PrevHash  string
-	Validator string
-}
-
-// Blockchain is a series of validated Blocks
-var Blockchain []Block
-var tempBlocks []Block
-
-// candidateBlocks handles incoming blocks for validation
-var candidateBlocks = make(chan Block)
-
-// announcements broadcasts winning validator to all nodes
-var announcements = make(chan string)
-
-var mutex = &sync.Mutex{}
-
-// validators keeps track of open validators and balances
-var validators = make(map[string]int)
+const difficulty = 1
 
 func main() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal(err)
-	}
 
-	// create genesis block
+	// Parse options from the command line
+	command  := flag.String("c", "", "mode[ \"chain\" or \"account\"]")
+	listenF := flag.Int("l", 0, "wait for incoming connections[chain mode param]")
+	target := flag.String("d", "", "target peer to dial[chain mode param]")
+	suffix := flag.String("s", "", "wallet suffix [chain mode param]")
+	initAccounts := flag.String("a", "", "init exist accounts whit value 10000")
+	secio := flag.Bool("secio", false, "enable secio[chain mode param]")
+	seed := flag.Int64("seed", 0, "set random seed for id generation[chain mode param]")
+	flag.Parse()
+
+
+	if *command == "chain" {
+		runblockchain(listenF, target, seed, secio, suffix, initAccounts)
+	}else if *command == "account" {
+		cli := wallet.WalletCli{}
+		cli.Run()
+	}else {
+		flag.Usage()
+	}
+}
+
+func runblockchain(listenF *int, target *string, seed *int64, secio *bool, suffix *string, initAccounts *string){
 	t := time.Now()
-	genesisBlock := Block{}
-	genesisBlock = Block{0, t.String(), 0, calculateBlockHash(genesisBlock), "", ""}
-	spew.Dump(genesisBlock)
-	Blockchain = append(Blockchain, genesisBlock)
+	genesisBlock := blockchain.Block{}
+	defaultAccounts := make(map[string]blockchain.Account)
 
-	httpPort := os.Getenv("PORT")
-
-	// start TCP and serve TCP server
-	server, err := net.Listen("tcp", ":"+httpPort)
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.Println("HTTP Server Listening on port :", httpPort)
-	defer server.Close()
-
-	go func() {
-		for candidate := range candidateBlocks {
-			mutex.Lock()
-			tempBlocks = append(tempBlocks, candidate)
-			mutex.Unlock()
-		}
-	}()
-
-	go func() {
-		for {
-			pickWinner()
-		}
-	}()
-
-	for {
-		conn, err := server.Accept()
-		if err != nil {
-			log.Fatal(err)
-		}
-		go handleConn(conn)
-	}
-}
-
-// pickWinner creates a lottery pool of validators and chooses the validator who gets to forge a block to the blockchain
-// by random selecting from the pool, weighted by amount of tokens staked
-func pickWinner() {
-	time.Sleep(15 * time.Second)
-	mutex.Lock()
-	temp := tempBlocks
-	mutex.Unlock()
-
-	lotteryPool := []string{}
-	if len(temp) > 0 {
-
-		// slightly modified traditional proof of stake algorithm
-		// from all validators who submitted a block, weight them by the number of staked tokens
-		// in traditional proof of stake, validators can participate without submitting a block to be forged
-	OUTER:
-		for _, block := range temp {
-			// if already in lottery pool, skip
-			for _, node := range lotteryPool {
-				if block.Validator == node {
-					continue OUTER
-				}
-			}
-
-			// lock list of validators to prevent data race
-			mutex.Lock()
-			setValidators := validators
-			mutex.Unlock()
-
-			k, ok := setValidators[block.Validator]
-			if ok {
-				for i := 0; i < k; i++ {
-					lotteryPool = append(lotteryPool, block.Validator)
-				}
-			}
-		}
-
-		// randomly pick winner from lottery pool
-		s := rand.NewSource(time.Now().Unix())
-		r := rand.New(s)
-		lotteryWinner := lotteryPool[r.Intn(len(lotteryPool))]
-
-		// add block of winner to blockchain and let all the other nodes know
-		for _, block := range temp {
-			if block.Validator == lotteryWinner {
-				mutex.Lock()
-				Blockchain = append(Blockchain, block)
-				mutex.Unlock()
-				for _ = range validators {
-					announcements <- "\nwinning validator: " + lotteryWinner + "\n"
-				}
-				break
-			}
-		}
-	}
-
-	mutex.Lock()
-	tempBlocks = []Block{}
-	mutex.Unlock()
-}
-
-func handleConn(conn net.Conn) {
-	defer conn.Close()
-
-	go func() {
-		for {
-			msg := <-announcements
-			io.WriteString(conn, msg)
-		}
-	}()
-	// validator address
-	var address string
-
-	// allow user to allocate number of tokens to stake
-	// the greater the number of tokens, the greater chance to forging a new block
-	io.WriteString(conn, "Enter token balance:")
-	scanBalance := bufio.NewScanner(conn)
-	for scanBalance.Scan() {
-		balance, err := strconv.Atoi(scanBalance.Text())
-		if err != nil {
-			log.Printf("%v not a number: %v", scanBalance.Text(), err)
+	if *initAccounts != ""{
+		if wallet.ValidateAddress(*initAccounts) == false {
+			fmt.Println("Invalid address")
 			return
 		}
-		t := time.Now()
-		address = calculateHash(t.String())
-		validators[address] = balance
-		fmt.Println(validators)
-		break
+		newAccount := new(blockchain.Account)
+		newAccount.Balance = 10000
+		newAccount.State = 0
+		defaultAccounts[*initAccounts] = *newAccount
 	}
 
-	io.WriteString(conn, "\nEnter a new Result:")
+	genesisBlock = blockchain.Block{0, t.String(), 0, blockchain.CalculateHash(genesisBlock), "", 100,make([]blockchain.Transaction,0), defaultAccounts,difficulty, ""}
 
-	scanResult := bufio.NewScanner(conn)
+	var blocks []blockchain.Block
+	blocks = append(blocks, genesisBlock)
+	blockchain.BlockchainInstance.Blocks =  blocks
 
-	go func() {
-		for {
-			// take in Result from stdin and add it to blockchain after conducting necessary validation
-			for scanResult.Scan() {
-				_result, err := strconv.Atoi(scanResult.Text())
-				// if malicious party tries to mutate the chain with a bad input, delete them as a validator and they lose their staked tokens
-				if err != nil {
-					log.Printf("%v not a number: %v", scanResult.Text(), err)
-					delete(validators, address)
-					conn.Close()
-				}
+	// LibP2P code uses golog to log messages. They log with different
+	// string IDs (i.e. "swarm"). We can control the verbosity level for
+	// all loggers with:
+	golog.SetAllLoggers(gologging.INFO) // Change to DEBUG for extra info
 
-				mutex.Lock()
-				oldLastIndex := Blockchain[len(Blockchain)-1]
-				mutex.Unlock()
+	if *listenF == 0 {
+		log.Fatal("Please provide a peer port to bind on with -l")
+	}
 
-				// create newBlock for consideration to be forged
-				newBlock, err := generateBlock(oldLastIndex, _result, address)
-				if err != nil {
-					log.Println(err)
-					continue
-				}
-				if isBlockValid(newBlock, oldLastIndex) {
-					candidateBlocks <- newBlock
-				}
-				io.WriteString(conn, "\nEnter a new Result:")
-			}
-		}
-	}()
+	if *suffix == "" {
+		log.Println("option param -s miss [you can't send transacion with this node]")
+	}else {
+		blockchain.WalletSuffix = *suffix
+	}
 
-	// simulate receiving broadcast
-	for {
-		time.Sleep(time.Minute)
-		mutex.Lock()
-		output, err := json.Marshal(Blockchain)
-		mutex.Unlock()
+	go rpc.RunHttpServer(*listenF+1)
+
+	// Make a host that listens on the given multiaddress
+	ha, err := blockchain.MakeBasicHost(*listenF, *secio, *seed, *initAccounts)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if *target == "" {
+		log.Println("listening for connections")
+		// Set a stream handler on host A. /p2p/1.0.0 is
+		// a user-defined protocol name.
+		ha.SetStreamHandler("/p2p/1.0.0", blockchain.HandleStream)
+
+		select {} // hang forever
+		/**** This is where the listener code ends ****/
+	} else {
+		ha.SetStreamHandler("/p2p/1.0.0", blockchain.HandleStream)
+
+		// The following code extracts target's peer ID from the
+		// given multiaddress
+		ipfsaddr, err := ma.NewMultiaddr(*target)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatalln(err)
 		}
-		io.WriteString(conn, string(output)+"\n")
+
+		pid, err := ipfsaddr.ValueForProtocol(ma.P_IPFS)
+		if err != nil {
+			log.Fatalln(err)
+		}
+
+		peerid, err := peer.IDB58Decode(pid)
+		if err != nil {
+			log.Fatalln(err)
+		}
+
+		// Decapsulate the /ipfs/<peerID> part from the target
+		// /ip4/<a.b.c.d>/ipfs/<peer> becomes /ip4/<a.b.c.d>
+		targetPeerAddr, _ := ma.NewMultiaddr(
+			fmt.Sprintf("/ipfs/%s", peer.IDB58Encode(peerid)))
+		targetAddr := ipfsaddr.Decapsulate(targetPeerAddr)
+
+		// We have a peer ID and a targetAddr so we add it to the peerstore
+		// so LibP2P knows how to contact it
+		ha.Peerstore().AddAddr(peerid, targetAddr, pstore.PermanentAddrTTL)
+
+		log.Println("opening stream")
+		// make a new stream from host B to host A
+		// it should be handled on host A by the handler we set above because
+		// we use the same /p2p/1.0.0 protocol
+		s, err := ha.NewStream(context.Background(), peerid, "/p2p/1.0.0")
+		if err != nil {
+			log.Fatalln(err)
+		}
+		// Create a buffered stream so that read and writes are non blocking.
+		rw := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
+
+		// Create a thread to read and write data.
+		go blockchain.WriteData(rw)
+		go blockchain.ReadData(rw)
+
+		select {} // hang forever
+
 	}
-
-}
-
-// isBlockValid makes sure block is valid by checking index
-// and comparing the hash of the previous block
-func isBlockValid(newBlock, oldBlock Block) bool {
-	if oldBlock.Index+1 != newBlock.Index {
-		return false
-	}
-
-	if oldBlock.Hash != newBlock.PrevHash {
-		return false
-	}
-
-	if calculateBlockHash(newBlock) != newBlock.Hash {
-		return false
-	}
-
-	return true
-}
-
-// SHA256 hasing
-// calculateHash is a simple SHA256 hashing function
-func calculateHash(s string) string {
-	h := sha256.New()
-	h.Write([]byte(s))
-	hashed := h.Sum(nil)
-	return hex.EncodeToString(hashed)
-}
-
-//calculateBlockHash returns the hash of all block information
-func calculateBlockHash(block Block) string {
-	record := string(block.Index) + block.Timestamp + string(block.Result) + block.PrevHash
-	return calculateHash(record)
-}
-
-// generateBlock creates a new block using previous block's hash
-func generateBlock(oldBlock Block, Result int, address string) (Block, error) {
-
-	var newBlock Block
-
-	t := time.Now()
-
-	newBlock.Index = oldBlock.Index + 1
-	newBlock.Timestamp = t.String()
-	newBlock.Result = Result
-	newBlock.PrevHash = oldBlock.Hash
-	newBlock.Hash = calculateBlockHash(newBlock)
-	newBlock.Validator = address
-
-	return newBlock, nil
 }
